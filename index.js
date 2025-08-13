@@ -19,7 +19,7 @@ const {
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 require("dotenv").config();
 const mongoose = require("mongoose");
-const Upload = require("../app/backend/models/Upload.js"); // adjust path if needed
+const Upload = require("./models/upload.js");
 
 mongoose.connect(process.env.MONGO_DB_URL, {
   useNewUrlParser: true,
