@@ -18,6 +18,13 @@ const {
 } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 require("dotenv").config();
+const mongoose = require("mongoose");
+const Upload = require("../app/backend/models/Upload.js"); // adjust path if needed
+
+mongoose.connect(process.env.MONGO_DB_URL, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
 
 const EXTRACT_DIR = "extracted";
 const LOG_DIR = "logs";
@@ -89,7 +96,7 @@ async function uploadFile(filePath) {
     }
     return false;
   } catch (e) {
-    console.error(` Error uploading ${filePath}:`, e);
+    console.error(` Error uploading ${filePath}:`);
     return false;
   }
 }
@@ -177,7 +184,7 @@ function clearErrorFiles() {
   if (fs.existsSync(errorsFinalPath)) {
     fs.unlinkSync(errorsFinalPath);
   }
-  statusData = {}; 
+  statusData = {};
 }
 
 function cleanupLocalFiles(filePath) {
@@ -229,7 +236,7 @@ async function processBatchesWithRetries() {
     if (remainingFiles.size > 0) {
       for (const filePath of remainingFiles) {
         fs.appendFileSync(errorsFinalPath, `${filePath}\n`);
-        failedPdfFiles.push(filePath); 
+        failedPdfFiles.push(filePath);
       }
     }
   }
@@ -260,6 +267,7 @@ async function worker() {
         const body = JSON.parse(message.Body);
         const bucket = body.s3Bucket;
         const key = body.s3Key;
+        const uploadId = body.documentId;
         const zipPath = `/tmp/${path.basename(key)}`;
 
         console.log(` Downloading ${key} from ${bucket}...`);
@@ -279,6 +287,16 @@ async function worker() {
         if (errorZipKey) {
           errorZipUrl = await getErrorZipPresignedUrl(errorZipKey);
         }
+
+        // Update the database record
+        await Upload.findOneAndUpdate(
+          { uploadId },
+          {
+            status: remainingFiles.size === 0 ? "completed" : "failed",
+            errorZipKey: errorZipKey ? null : "Some error info",
+            processedAt: new Date(),
+          }
+        );
 
         cleanupLocalFiles(zipPath);
         if (fs.existsSync(EXTRACT_DIR)) {

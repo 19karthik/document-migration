@@ -15,10 +15,12 @@ const Upload = mongoose.model('Upload', new mongoose.Schema({
   },
   successCount: { type: Number, default: 0 },
   failureCount: { type: Number, default: 0 },
+  errorZipKey: String, 
   messageId: String,
   errorMessage: String,
   uploadedAt: { type: Date, default: Date.now },
-  completedAt: Date
+  completedAt: Date,
+  processedAt: Date 
 }, { timestamps: true }));
  
 module.exports = Upload;
