@@ -200,6 +200,7 @@ async function processBatchesWithRetries() {
   const batches = createBatches(allFiles, BATCH_SIZE);
 
   failedPdfFiles = [];
+  let allRemainingFiles = new Set();
 
   for (let batchNum = 0; batchNum < batches.length; batchNum++) {
     const batch = batches[batchNum];
@@ -233,9 +234,11 @@ async function processBatchesWithRetries() {
       for (const filePath of remainingFiles) {
         fs.appendFileSync(errorsFinalPath, `${filePath}\n`);
         failedPdfFiles.push(filePath);
+        allRemainingFiles.add(filePath);
       }
     }
   }
+  return allRemainingFiles;
 }
 
 async function worker() {
@@ -276,7 +279,7 @@ async function worker() {
         await new Promise((resolve) => fileStream.on("close", resolve));
         extractZip(zipPath, EXTRACT_DIR);
 
-        await processBatchesWithRetries();
+        const remainingFiles = await processBatchesWithRetries();
         await uploadToS3(errorsFinalPath, key);
         const errorZipKey = await uploadErrorZipToS3(key);
         let errorZipUrl = null;
