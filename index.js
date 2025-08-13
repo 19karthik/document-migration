@@ -19,6 +19,8 @@ const {
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 require("dotenv").config();
 const Upload = require("./models/upload.js");
+// const Upload = require("./models/upload.js").default;
+
 
 connectDB().catch(console.error);
 
@@ -80,7 +82,10 @@ async function uploadFile(filePath) {
     const response = await axios.post(
       DUMMY_API_URL,
       {
-        file: fileData,
+        "import_id": "bulkuploadofdocuments",
+        "file_type": "Merit Planning Letters",
+        "emp_id_or_user_id": "Employee ID",
+        "zip_file": "Attach Zip file here"
       },
       {
         headers: { "Content-Type": "multipart/form-data" },
@@ -262,11 +267,12 @@ async function worker() {
     for (const message of messages) {
       try {
         clearErrorFiles();
-
+        console.log(" Processing message:", message);
         const body = JSON.parse(message.Body);
+        console.log(" Message body:", body);
         const bucket = body.s3Bucket;
         const key = body.s3Key;
-        const uploadId = body.documentId;
+        const uploadId = body.objectId;
         const zipPath = `/tmp/${path.basename(key)}`;
 
         console.log(` Downloading ${key} from ${bucket}...`);
@@ -281,22 +287,31 @@ async function worker() {
 
         const remainingFiles = await processBatchesWithRetries();
         await uploadToS3(errorsFinalPath, key);
-        const errorZipKey = await uploadErrorZipToS3(key);
+
+        let errorZipKey = null;
         let errorZipUrl = null;
-        if (errorZipKey) {
-          errorZipUrl = await getErrorZipPresignedUrl(errorZipKey);
+        if (remainingFiles.size > 0) {
+          errorZipKey = await uploadErrorZipToS3(key);
+          if (errorZipKey) {
+            errorZipUrl = await getErrorZipPresignedUrl(errorZipKey);
+          }
         }
+
+        console.log(`'''''''''''''''''''''''''''''''''''${uploadId}'''''''''''''''''''''''''''''''''''`);
 
         // Update the database record
         await Upload.findOneAndUpdate(
-          { uploadId },
-          {
+        { _id:uploadId }, // filter
+        {
+          $set: {
             status: remainingFiles.size === 0 ? "completed" : "failed",
-            errorZipKey: errorZipKey ? null : "Some error info",
+            errorZipKey: errorZipKey || null,
             processedAt: new Date(),
-          }
-        );
+          },
+        }
+      );
 
+      console.log(`'''''''''''''''''''''''''''''''''''${uploadId}'''''''''''''''''''''''''''''''''''`);
         cleanupLocalFiles(zipPath);
         if (fs.existsSync(EXTRACT_DIR)) {
           fs.rmSync(EXTRACT_DIR, { recursive: true, force: true });
