@@ -18,13 +18,10 @@ const {
 } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 require("dotenv").config();
-const mongoose = require("mongoose");
 const Upload = require("./models/upload.js");
+import connectDB from "./db/mongo.js";
 
-mongoose.connect(process.env.MONGO_DB_URL, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+connectDB().catch(console.error);
 
 const EXTRACT_DIR = "extracted";
 const LOG_DIR = "logs";
