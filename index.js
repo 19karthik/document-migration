@@ -1,6 +1,6 @@
 // Required Dependencies:
 // npm install @aws-sdk/client-sqs @aws-sdk/client-s3 axios dotenv adm-zip
-
+const connectDB = require("./db/mongo.js");
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
@@ -19,7 +19,6 @@ const {
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 require("dotenv").config();
 const Upload = require("./models/upload.js");
-import connectDB from "./db/mongo.js";
 
 connectDB().catch(console.error);
 
