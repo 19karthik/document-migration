@@ -72,21 +72,24 @@ function createBatches(files, batchSize) {
   return batches;
 }
 
-async function uploadFile(filePath) {
+async function uploadFile(filePath, import_id, file_type, emp_id_or_user_id) {
   try {
     const fileData = fs.readFileSync(filePath);
+    console.log(` Uploading ${filePath}...`);
+    console.log(`import_id: ${import_id}, file_type: ${file_type}, emp_id_or_user_id: ${emp_id_or_user_id}`);
     const response = await axios.post(
       DUMMY_API_URL,
       {
-        "import_id": "bulkuploadofdocuments",
-        "file_type": "Merit Planning Letters",
-        "emp_id_or_user_id": "Employee ID",
-        "zip_file": "Attach Zip file here"
+        import_id,
+        file_type,
+        emp_id_or_user_id,
+        zip_file: fileData
       },
       {
         headers: { "Content-Type": "multipart/form-data" },
       }
     );
+    console.log
     if (response.status === 200) {
       cleanupLocalFiles(filePath);
       return true;
@@ -195,7 +198,7 @@ function cleanupLocalFiles(filePath) {
   }
 }
 
-async function processBatchesWithRetries() {
+async function processBatchesWithRetries(import_id, file_type, emp_id_or_user_id) {
   console.log(" Starting batch-wise processing with retries...\n");
   const allFiles = getAllPdfFiles(EXTRACT_DIR);
   const batches = createBatches(allFiles, BATCH_SIZE);
@@ -215,7 +218,7 @@ async function processBatchesWithRetries() {
 
       for (const filePath of [...remainingFiles]) {
         console.log(` Uploading ${filePath}`);
-        const success = await uploadFile(filePath);
+        const success = await uploadFile(filePath,import_id, file_type, emp_id_or_user_id);
         statusData[filePath] = success ? "success" : "failed";
 
         if (success) remainingFiles.delete(filePath);
@@ -269,6 +272,9 @@ async function worker() {
         const bucket = body.s3Bucket;
         const key = body.s3Key;
         const uploadId = body.objectId;
+        const import_id = body.import_id;
+        const file_type = body.file_type;
+        const emp_id_or_user_id = body.emp_id_or_user_id;
         const zipPath = `/tmp/${path.basename(key)}`;
 
         console.log(` Downloading ${key} from ${bucket}...`);
@@ -281,7 +287,7 @@ async function worker() {
         await new Promise((resolve) => fileStream.on("close", resolve));
         extractZip(zipPath, EXTRACT_DIR);
 
-        const remainingFiles = await processBatchesWithRetries();
+        const remainingFiles = await processBatchesWithRetries(import_id, file_type, emp_id_or_user_id);
         await uploadToS3(errorsFinalPath, key);
 
         let errorZipKey = null;
