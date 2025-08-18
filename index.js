@@ -1,5 +1,3 @@
-// Required Dependencies:
-// npm install @aws-sdk/client-sqs @aws-sdk/client-s3 axios dotenv adm-zip
 const connectDB = require("./db/mongo.js");
 const fs = require("fs");
 const path = require("path");
@@ -19,8 +17,6 @@ const {
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 require("dotenv").config();
 const Upload = require("./models/upload.js");
-// const Upload = require("./models/upload.js").default;
-
 
 connectDB().catch(console.error);
 
@@ -299,9 +295,8 @@ async function worker() {
 
         console.log(`'''''''''''''''''''''''''''''''''''${uploadId}'''''''''''''''''''''''''''''''''''`);
 
-        // Update the database record
         await Upload.findOneAndUpdate(
-        { _id:uploadId }, // filter
+        { _id:uploadId }, 
         {
           $set: {
             status: remainingFiles.size === 0 ? "completed" : "failed",
