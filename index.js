@@ -72,35 +72,36 @@ function createBatches(files, batchSize) {
   return batches;
 }
 
-async function uploadFile(
-  zipFilePath,
-  import_id,
-  file_type,
-  emp_id_or_user_id
-) {
+async function uploadFile(filePath, import_id, file_type, emp_id_or_user_id) {
   try {
-    const fileData = fs.readFileSync(zipFilePath);
-    const FormData = require("form-data");
-    const form = new FormData();
-    form.append("import_id", import_id);
-    form.append("file_type", file_type);
-    form.append("emp_id_or_user_id", emp_id_or_user_id);
-    form.append("zip_file", fileData, { filename: path.basename(zipFilePath) });
-    console.log(`Uploading ${zipFilePath}...`);
-    console.log(`Form Data: ${JSON.stringify(form)}`);
-
-    const response = await axios.post(DUMMY_API_URL, form, {
-      headers: form.getHeaders(),
-    });
-
+    const fileData = fs.readFileSync(filePath);
+    const base64Zip = fileData.toString("base64"); 
+    console.log(`base64Zip : ${base64Zip.substring(0, 50)}...`); 
+    console.log(
+      `import_id: ${import_id}, file_type: ${file_type}, emp_id_or_user_id: ${emp_id_or_user_id}`
+    );
+    console.log(` Uploading ${filePath} as base64...`);
+    const response = await axios.post(
+      DUMMY_API_URL,
+      {
+        import_id,
+        file_type,
+        emp_id_or_user_id,
+        zip_file: base64Zip, 
+      },
+      {
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+    console.log(`Response from upload API: ${response.status}`);
     if (response.status === 200) {
-      cleanupLocalFiles(zipFilePath);
-      return response.data; // Should contain processed/failed files
+      cleanupLocalFiles(filePath);
+      return true;
     }
-    return null;
+    return false;
   } catch (e) {
-    console.error(` Error uploading ${zipFilePath}:`, e);
-    return null;
+    console.error(` Error uploading ${filePath}:`);
+    return false;
   }
 }
 
@@ -247,11 +248,9 @@ async function processBatchesWithRetries(
         processedFiles = response.processed || [];
         failedFiles = response.failed || [];
       } else {
-        // If upload failed, treat all as failed
         failedFiles = [...remainingFiles];
       }
 
-      // Update status and logs
       processedFiles.forEach((filePath) => {
         statusData[filePath] = "success";
         remainingFiles.delete(filePath);
