@@ -20,7 +20,16 @@ const UploadSchema = new mongoose.Schema({
   errorMessage: String,
   uploadedAt: { type: Date, default: Date.now },
   completedAt: Date,
-  processedAt: Date 
-}, { timestamps: true });
+  processedAt: Date,
+  errorDetails: [
+    {
+      fileName: String,
+      error: String
+    }
+  ],
+}, 
+  { timestamps: true })
+
+
 
 module.exports = mongoose.model('Upload', UploadSchema);

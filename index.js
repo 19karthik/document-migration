@@ -17,6 +17,8 @@ const {
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 require("dotenv").config();
 const Upload = require("./models/upload.js");
+const FormData = require("form-data");
+const studioEndpoint = require("./studioEndpoint.js");
 
 connectDB().catch(console.error);
 
@@ -64,43 +66,80 @@ function getAllPdfFiles(folder) {
   return results.sort();
 }
 
-function createBatches(files, batchSize) {
+function createBatches(files, maxBatchSizeMB) {
   const batches = [];
-  for (let i = 0; i < files.length; i += batchSize) {
-    batches.push(files.slice(i, i + batchSize));
+  let currentBatch = [];
+  let currentBatchSize = 0;
+  const maxBatchSizeBytes = maxBatchSizeMB * 1024 * 1024;
+
+  for (const file of files) {
+    const fileSize = fs.statSync(file).size;
+    if (
+      currentBatchSize + fileSize > maxBatchSizeBytes &&
+      currentBatch.length > 0
+    ) {
+      batches.push(currentBatch);
+      console.log(
+        `Batch ${batches.length}: ${currentBatch.length} files, ${(
+          currentBatchSize /
+          (1024 * 1024)
+        ).toFixed(2)} MB`
+      );
+      currentBatch = [];
+      currentBatchSize = 0;
+    }
+    currentBatch.push(file);
+    currentBatchSize += fileSize;
+  }
+
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+    console.log(
+      `Batch ${batches.length}: ${currentBatch.length} files, ${(
+        currentBatchSize /
+        (1024 * 1024)
+      ).toFixed(2)} MB`
+    );
   }
   return batches;
 }
 
-async function uploadFile(filePath, import_id, file_type, emp_id_or_user_id) {
+async function uploadFile(
+  filePath,
+  import_id,
+  file_type,
+  emp_id_or_user_id,
+  uploadId
+) {
   try {
-    const fileData = fs.readFileSync(filePath);
-    const base64Zip = fileData.toString("base64"); 
-    console.log(`base64Zip : ${base64Zip.substring(0, 50)}...`); 
-    console.log(
-      `import_id: ${import_id}, file_type: ${file_type}, emp_id_or_user_id: ${emp_id_or_user_id}`
-    );
-    console.log(` Uploading ${filePath} as base64...`);
-    const response = await axios.post(
-      DUMMY_API_URL,
-      {
-        import_id,
-        file_type,
-        emp_id_or_user_id,
-        zip_file: base64Zip, 
-      },
-      {
-        headers: { "Content-Type": "application/json" },
-      }
-    );
-    console.log(`Response from upload API: ${response.status}`);
-    if (response.status === 200) {
+    const response = await studioEndpoint({
+      zipFilePath: filePath,
+      import_id,
+      file_type,
+      emp_id_or_user_id,
+    });
+    if (response  && response.data.count_err_rows > 0) {
+      const errorDetails = response.data.error_data.map((errObj) => ({
+        fileName: errObj["File Name"],
+        error: errObj.Errors,
+      }));
+
+      await Upload.findOneAndUpdate(
+        { _id: uploadId },
+        { $push: { errorDetails: { $each: errorDetails } } ,
+          // $set:{status:"successful"}
+        }
+      );
+    }
+    console.log(`Response from Darwinbox API:`, response);
+
+    if (response && response.status === 1) {
       cleanupLocalFiles(filePath);
-      return true;
+      return response;
     }
     return false;
   } catch (e) {
-    console.error(` Error uploading ${filePath}:`);
+    console.error(`Error uploading ${filePath}:`, e);
     return false;
   }
 }
@@ -214,7 +253,8 @@ function zipBatchFiles(batch, batchNum) {
 async function processBatchesWithRetries(
   import_id,
   file_type,
-  emp_id_or_user_id
+  emp_id_or_user_id,
+  uploadId
 ) {
   console.log(" Starting batch-wise processing with retries...\n");
   const allFiles = getAllPdfFiles(EXTRACT_DIR);
@@ -232,39 +272,63 @@ async function processBatchesWithRetries(
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       console.log(` Attempt ${attempt} for batch ${batchNum + 1}`);
 
-      // Zip the batch and upload
       const batchZipPath = zipBatchFiles([...remainingFiles], batchNum);
       const response = await uploadFile(
         batchZipPath,
         import_id,
         file_type,
-        emp_id_or_user_id
+        emp_id_or_user_id,
+        uploadId
       );
 
       let processedFiles = [];
       let failedFiles = [];
+      if (response) {
+        failedFiles = response.data.error_data || [];
+        failedFiles.forEach((fileObj) => {
+          const fileName = fileObj["File Name"] || "Unknown File";
+          const errorMsg = fileObj["Errors"] || "Unknown Error";
 
-      if (response && response.success) {
+          statusData[fileName] = "failed";
+          console.log(
+            "|||||||||||||||||||||||||||||||||||||||||||||||||||||||"
+          );
+          console.log(` File failed: ${fileName}`);
+          console.log(` Error: ${errorMsg}`);
+          fs.appendFileSync(errorsLogPath, `${fileName} | ${errorMsg}\n`);
+          remainingFiles.delete(fileName);
+        });
+        fs.writeFileSync(statusLogPath, JSON.stringify(statusData, null, 2));
+        break;
+      } else if (response && response.status !== 1) {
         processedFiles = response.processed || [];
-        failedFiles = response.failed || [];
+        failedFiles = response.error_data || [];
+
+        processedFiles.forEach((filePath) => {
+          statusData[filePath] = "success";
+          remainingFiles.delete(filePath);
+        });
+
+        failedFiles.forEach((filePath) => {
+          statusData[filePath] = "failed";
+          fs.appendFileSync(errorsLogPath, `${filePath}\n`);
+          remainingFiles.add(filePath);
+        });
+
+        fs.writeFileSync(statusLogPath, JSON.stringify(statusData, null, 2));
+
+        remainingFiles = new Set(failedFiles);
+        if (remainingFiles.size === 0) break;
+        else console.log(` Retrying ${remainingFiles.size} failed files...`);
       } else {
         failedFiles = [...remainingFiles];
+        failedFiles.forEach((filePath) => {
+          statusData[filePath] = "failed";
+          fs.appendFileSync(errorsLogPath, `${filePath}\n`);
+        });
+        fs.writeFileSync(statusLogPath, JSON.stringify(statusData, null, 2));
+        break;
       }
-
-      processedFiles.forEach((filePath) => {
-        statusData[filePath] = "success";
-        remainingFiles.delete(filePath);
-      });
-
-      failedFiles.forEach((filePath) => {
-        statusData[filePath] = "failed";
-        fs.appendFileSync(errorsLogPath, `${filePath}\n`);
-      });
-
-      fs.writeFileSync(statusLogPath, JSON.stringify(statusData, null, 2));
-
-      if (remainingFiles.size === 0) break;
-      else console.log(` Retrying ${remainingFiles.size} failed files...`);
     }
 
     if (remainingFiles.size > 0) {
@@ -275,6 +339,14 @@ async function processBatchesWithRetries(
       }
     }
   }
+  await Upload.findOneAndUpdate(
+    { _id: uploadId },
+    {
+      $set: {
+        status: "successful",
+      },
+    }
+  );
   return allRemainingFiles;
 }
 
@@ -323,7 +395,8 @@ async function worker() {
         const remainingFiles = await processBatchesWithRetries(
           import_id,
           file_type,
-          emp_id_or_user_id
+          emp_id_or_user_id,
+          uploadId
         );
         await uploadToS3(errorsFinalPath, key);
 
@@ -335,24 +408,15 @@ async function worker() {
             errorZipUrl = await getErrorZipPresignedUrl(errorZipKey);
           }
         }
-
-        console.log(
-          `'''''''''''''''''''''''''''''''''''${uploadId}'''''''''''''''''''''''''''''''''''`
-        );
-
         await Upload.findOneAndUpdate(
           { _id: uploadId },
           {
             $set: {
-              status: remainingFiles.size === 0 ? "completed" : "failed",
+              // status: remainingFiles.size === 0 ? "completed" : "failed",
               errorZipKey: errorZipKey || null,
               processedAt: new Date(),
             },
           }
-        );
-
-        console.log(
-          `'''''''''''''''''''''''''''''''''''${uploadId}'''''''''''''''''''''''''''''''''''`
         );
         cleanupLocalFiles(zipPath);
         if (fs.existsSync(EXTRACT_DIR)) {
